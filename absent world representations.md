@@ -137,7 +137,9 @@ After 160k batches I decreased the learning rate to 1e-5 and that seemed to impr
 ## Model performance
 
 The model was able to produce a **legal move** in **99%** of the cases
+
 The model was able to produce a **checkmate** in **72%** of the games **vs random defense** and **69% vs optimal defense**
+
 After playing few games with the model I noticed that the model has well learned the algorithm and was methodically cornering my king into the white corner. The first few moves seemed sub-optimal but once my king was forced on the edge of the board it seemed that the model was producing optimal moves.
 Something that I found interesting was that *it seemed that the model was able to detect when its pieces were in danger* and always moved them out of the way. I was not able to capture its piece a single time.
 
@@ -253,7 +255,7 @@ I wanted to understand more how the model decides which moves are legal and whic
 
 I chose the following example:
 
-[board]
+![Board](https://lichess1.org/export/fen.gif?fen=4B3%2F1k6%2F4N3%2F8%2F1K6%2F8%2F8%2F8+w+-+-+38+20&color=white&lastMove=a6b7&variant=standard&theme=brown&piece=cburnett)
 
 Here the last move from black was 'kb7' to which the model predicts 'Kb5'. I want to patch it so that black's last move was 'kb6' (which makes the following 'Kb5' illegal) and see which layers change the output significantly.
 
