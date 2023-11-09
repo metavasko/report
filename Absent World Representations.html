@@ -1,0 +1,444 @@
+﻿<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome file</title>
+  <link rel="stylesheet" href="https://stackedit.io/style.css" />
+
+  <script>
+    var currentGraph = 1;
+    var totalGraphs = 49;
+
+    function showGraph(n) {
+        var i;
+        for (i = 1; i <= totalGraphs; i++) {
+            document.getElementById('Bgraph' + i).style.display = 'none';
+            document.getElementById('Kgraph' + i).style.display = 'none';
+            document.getElementById('Ngraph' + i).style.display = 'none';
+            document.getElementById('Egraph' + i).style.display = 'none';
+        }
+        document.getElementById('Bgraph' + n).style.display = 'inline-block';
+        document.getElementById('Kgraph' + n).style.display = 'inline-block';
+        document.getElementById('Ngraph' + n).style.display = 'inline-block';
+        document.getElementById('Egraph' + n).style.display = 'inline-block';
+        
+        currentGraph = n;
+    }
+
+    function switchGraphs(direction) {
+        currentGraph += direction;
+        if (currentGraph < 1) {
+            currentGraph = totalGraphs;
+        } else if (currentGraph > totalGraphs) {
+            currentGraph = 1;
+        }
+        showGraph(currentGraph);
+    }
+</script>
+</head>
+
+<body class="stackedit">
+  <div class="stackedit__html"><h1 id="absent-world-representations">Absent* World Representations</h1>
+<p>*Absent for me to see, this is not a claim there are none</p>
+<h2 id="intro">Intro</h2>
+<h3 id="choosing-a-model">Choosing a model</h3>
+<p>When I began this project, my first dilemma was deciding which model to work on. I could have chosen a pre-trained model and built upon existing work, which would have provided a head start and seemed like the safer option. However, I chose to train my own model. The main reason was that it seemed like a great learning experience as I haven’t trained a model before, and even though this increased the risk of the whole project failing, I was very motivated to give it a try.</p>
+<h3 id="choosing-a-problem">Choosing a problem</h3>
+<p>I am a huge chess fan, and for a while, I had the idea to train a model to play chess and try to understand what game abstractions it builds. It was inspired by the <a href="https://arxiv.org/abs/2210.13382">Emergent World Representations: Exploring a Sequence Model Trained on a Synthetic Task</a> (Li et al., 2023) and <a href="https://arxiv.org/abs/2309.00941">Emergent Linear Representations in World Models of Self-Supervised Sequence Models</a> (Nanda et al., 2023) papers, which showed substantial evidence that models do indeed build game board representations. I had to also consider the fact that that pursuing work closely resembling existing research might be less impactful than exploring a novel direction. However, for this particular project, I wanted to focus on learning and having fun while experimenting with a significant chance of failure and this problem seemed like a very fun thing to work on. I also thought it unlikely that I would find something groundbreaking on my try but I thought that if I were find emergent world representations in a chess model I think that would still hold some value. It any case, this seemed like a good project to take risks with as it was time limited. For a ‘real world’ research I would probably choose to work on something more promising.</p>
+<h3 id="opening-move">Opening move</h3>
+<p>The convergence of my decision to train a model from scratch and the aspiration to train it in chess neatly led to the decision to instruct a model on executing a checkmate using only a knight and a bishop. <a href="https://en.wikipedia.org/wiki/Bishop_and_knight_checkmate">The knight and bishop checkmate</a> is one of the four basic endgame checkmates but it is deceptively complicated (even <a href="https://en.wikipedia.org/wiki/Bishop_and_knight_checkmate#Grandmasters_failing_to_mate">grandmasters have failed</a> to execute it!). With perfect play, the strong side can force a checkmate in at most 33 moves from any position. The algorithm that needs to be learned involves creating “barriers” with the bishop and knight to drive the opposing king to the edge of the board and then force it into a corner with the same color as the bishop for the checkmate.</p>
+<p><img src="https://images.chesscomfiles.com/uploads/v1/images_users/tiny_mce/pdrpnht/phpN1Bc6B.png" alt="Knight and bishop strategy"></p>
+<p>Some napkin calculations show that there are 32 ♗ x  63  ♔ x 62  ♘ x 50♚(estimate) x 2(sides) = <strong>15.5 million possible legal positions</strong><br>
+However the number of possible move sequences is vastly greater, if we consider the 50-move rule and assume that there are 4 possible moves for position, for 50 moves we would have at most <strong>4^100 possible legal move sequences</strong> (surely less as this does not take into account early terminations due to checkmate/stalemate but as the terminal positions are a tiny fraction of all possible positions I have omitted that). My hypothesis is that in order to be able to produce legal move sequences the model will have to build some representation of the game rather than trying to find patters in the sequence.</p>
+<h2 id="hypotheses">Hypotheses</h2>
+<p>Starting the project I was expecting to see the following things</p>
+<ul>
+<li>A model is able to produce a legal move in 99%+ cases (similar to the Othello model)</li>
+<li>A model is able to checkmate in 90% cases (I suspect that learning the checkmate algorithm is vastly harder than learning the board representation)</li>
+<li>The model will have an internal representations of the positions of the pieces
+<ul>
+<li>I can train a linear probe to predict the positions of the pieces from the residual stream of the model</li>
+<li>Using the linear probe I can modify the internal position to make the king suddenly appear on the other end of the board for example</li>
+</ul>
+</li>
+<li>The model will have an internal representation of the possible moves/squares attacked by each piece
+<ul>
+<li>I can train a linear probe to predict the possible moves from the residual stream of the model</li>
+<li>Using the linear probe I can make the king move like a knight for example</li>
+</ul>
+</li>
+<li>The model will have an internal representation when a piece is in ‘danger’
+<ul>
+<li>In theory this can be derived from the previous two (check if the positions of my pieces fall on a possible move by the opponent) but as moving pieces away from danger is such an important part of the algorithm I would expect to see it clearly</li>
+</ul>
+</li>
+<li>The model will have will have an iduction head to retrieve the last position of each piece. Ideally there will be separate heads for the different pieces which will help me see them clearly but probably it will be a multi-semantic one that will do a bunch of stull altogether.</li>
+</ul>
+<p><sub>Spoiler alert: Most of those did not come true as you can guess from the title</sub></p>
+<h2 id="model">Model</h2>
+<p>I decided to train a small (3 million parameters) GPT-2-like model with the following parameters:</p>
+<pre class=" language-python"><code class="prism  language-python">n_layers <span class="token operator">=</span> <span class="token number">4</span><span class="token punctuation">,</span>
+d_head <span class="token operator">=</span> <span class="token number">64</span><span class="token punctuation">,</span>
+n_heads <span class="token operator">=</span> <span class="token number">4</span><span class="token punctuation">,</span>
+d_model <span class="token operator">=</span> <span class="token number">64</span> <span class="token operator">*</span> <span class="token number">4</span><span class="token punctuation">,</span>
+d_mlp <span class="token operator">=</span> <span class="token number">4</span> <span class="token operator">*</span> <span class="token punctuation">(</span><span class="token number">64</span> <span class="token operator">*</span> <span class="token number">4</span><span class="token punctuation">)</span><span class="token punctuation">,</span>
+d_vocab <span class="token operator">=</span> <span class="token number">221</span><span class="token punctuation">,</span>
+n_ctx <span class="token operator">=</span> <span class="token number">100</span><span class="token punctuation">,</span>
+act_fn<span class="token operator">=</span><span class="token string">"gelu"</span><span class="token punctuation">,</span>
+normalization_type<span class="token operator">=</span><span class="token string">"LNPre"</span>
+</code></pre>
+<p>This was the first time I was training a model (I’m using this excuse a lot) so I expect a lot of those to be a very sub-optimal but here were my considerations for choosing them:</p>
+<ul>
+<li>I wanted the model to be small enough that I can train it on my home computer</li>
+<li>I was worried that a model that is too big would start to memorize and would not be pressured to generalize</li>
+<li>Basically trying to do what the Othello model did so I kept the activation function and normalization type the same</li>
+<li>I decided that each game can be at most 50 moves long (because of the <a href="https://en.wikipedia.org/wiki/Fifty-move_rule">50-move rule</a>) so the context length was set to 100. In the dataset I generated the longest game was 77 moves so that could have been lowered</li>
+<li>The vocab was all the possible moves one can make (that appeared in the dataset that I generated) in the <a href="https://en.wikipedia.org/wiki/Algebraic_notation_(chess)">Standard algebraic notation</a> (eg. ‘Bc4’) I decided that is better than to create a tuple of all possible squares (eg ‘f1c4’) because a) now the dictionary is smaller b) I can make a distinction between the different moves (a King moving from d3 to c4 would be a different move than a Bishop moving from d3 to c4) c) I can query and see relationships between the moves for the different pieces (which is the most likely bishop move?)</li>
+</ul>
+<p>The code for the model is <a href="">on github</a></p>
+<h2 id="dataset">Dataset</h2>
+<h3 id="format">Format</h3>
+<p>As this is a sequential model, I cannot just feed it an already set position that is tokenized as the sequence of tokens would not have much meaning. Instead, I decided to feed in the position as a sequence of moves from a set start position, similar to the Othello model. I understand that this is not the best model for the task but my goal was not to create the best bishop-and-knight-checkmating model and based on the Othello paper I was expecting this model to be able to do a reasonably good job using this format.</p>
+<p>Because the games would be of different length I decided to pad them with an empty symbol so that I can create batches that are always with the context length. Before the first move I have also added a ‘&lt;BOS&gt;’ token.</p>
+<p>I decided to create a separate example for each move in each game. I did this in order to vastly increase the number of entries in the data set. However, in retrospect I consider it to be a mistake as this trains the model disproportionally on the first moves, which also turn out not to be good (the first 10 moves are generated at random, see ‘Generating the dataset’).</p>
+<h3 id="starting-position">Starting position</h3>
+<p>I decided on the following starting position:</p>
+<p><img src="https://lichess1.org/export/fen.gif?fen=8%2F8%2F8%2F4k3%2F8%2F8%2F8%2F5BKN+w+-+-+0+1&amp;color=white&amp;variant=standard&amp;theme=brown&amp;piece=cburnett" alt="Starting position"></p>
+<p>Naturally, my aim was to generate a dataset encompassing a wide array of positions. Given the general strategy of the white pieces to herd the black king into a white corner, I tried to give the black king as much freedom as possible, which I hoped would lead to a more diverse set of positions. I thought that stuffing the white pieces in a white corner while leaving the black corners empty would help for that.</p>
+<h3 id="generating-the-dataset">Generating the dataset</h3>
+<p>Thankfully people have already <a href="https://github.com/syzygy1/tb">precomputed</a> all chess endings with 7 or less prieces and there is even a <a href="https://python-chess.readthedocs.io/en/latest/syzygy.html">python interface for it</a>. The format of the engame database is that for every position you get a <a href="https://lczero.org/blog/2020/04/wdl-head/">Win-Draw-Loss evaluation</a> (not interesting in this case as white is always winning) and a <a href="https://en.wikipedia.org/wiki/Endgame_tablebase#Generating_tablebases">Depth-to-zeroing</a> (DTZ) which in this case would be Depth-to-mate. I made a script that for a given position samples all possible moves and chooses the one that minimizes the DTZ (or maximize it for black)</p>
+<p>To generate a large set of positions I generated the first 10 moves at random.</p>
+<p>Here is the script I used to do that</p>
+<p><sub>Side note: initially I tried generating the positions with <a href="">Stockfish</a>, however that turned out to be impractical because a) Stockfish’s evaluation algorithm is CPU heavy b) It turned out that Stockfish is not very good at checkmating without deep evaluation. With depth &lt;15 Stockfish was not able to consistently produce checkmates in less than 50 moves and with depth=15 I was generating roughly 1 game per second :( <sub></sub></sub></p>
+<h3 id="dataset-stats">Dataset stats</h3>
+<p>I have generated 180k games, 176k of which were unique (I removed the duplicates)</p>
+<pre class=" language-c"><code class="prism ++ language-c">Number of unique positions<span class="token punctuation">:</span> <span class="token number">1133898</span>
+Total number of moves<span class="token punctuation">:</span> <span class="token number">8221770</span>
+Longest game<span class="token punctuation">:</span> <span class="token number">77</span>
+Shortest game<span class="token punctuation">:</span> <span class="token number">15</span>
+Average game length<span class="token punctuation">:</span> <span class="token number">46</span>
+Number of unique moves<span class="token punctuation">:</span> <span class="token number">219</span>
+Most common moves<span class="token punctuation">:</span> <span class="token punctuation">[</span><span class="token punctuation">(</span><span class="token string">'kh8'</span><span class="token punctuation">,</span> <span class="token number">388131</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'ka8'</span><span class="token punctuation">,</span> <span class="token number">218311</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'kh7'</span><span class="token punctuation">,</span> <span class="token number">215326</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'kg8'</span><span class="token punctuation">,</span> <span class="token number">208857</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'kb8'</span><span class="token punctuation">,</span> <span class="token number">193698</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'ke8'</span><span class="token punctuation">,</span> <span class="token number">179780</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'kh5'</span><span class="token punctuation">,</span> <span class="token number">169811</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'kd8'</span><span class="token punctuation">,</span> <span class="token number">159701</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Kf2'</span><span class="token punctuation">,</span> <span class="token number">154201</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'kg7'</span><span class="token punctuation">,</span> <span class="token number">151502</span><span class="token punctuation">)</span><span class="token punctuation">]</span>
+Least common moves<span class="token punctuation">:</span> <span class="token punctuation">[</span><span class="token punctuation">(</span><span class="token string">'Kb7'</span><span class="token punctuation">,</span> <span class="token number">1</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Ka3'</span><span class="token punctuation">,</span> <span class="token number">2</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Kh8'</span><span class="token punctuation">,</span> <span class="token number">4</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Kb1'</span><span class="token punctuation">,</span> <span class="token number">5</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Na8'</span><span class="token punctuation">,</span> <span class="token number">7</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Na1'</span><span class="token punctuation">,</span> <span class="token number">7</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Kb8'</span><span class="token punctuation">,</span> <span class="token number">10</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Kg8'</span><span class="token punctuation">,</span> <span class="token number">13</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Kb2'</span><span class="token punctuation">,</span> <span class="token number">15</span><span class="token punctuation">)</span><span class="token punctuation">,</span> <span class="token punctuation">(</span><span class="token string">'Ka4'</span><span class="token punctuation">,</span> <span class="token number">23</span><span class="token punctuation">)</span><span class="token punctuation">]</span>
+</code></pre>
+<p><sub> Note: I use capital ‘K’ for white king’s moves and lowercase ‘k’ for black king’s moves</sub></p>
+<p>Here is a bar graph of the frequency of all possible moves (tokens):</p>
+<p><img src="https://gcdnb.pbrd.co/images/lTOC8r3gnXjz.png?o=1" alt="Dataset"></p>
+<p>It was expected that some moves would be over-represented as all games finish on the edge of the board and most of them specifically in one of the two white corners. However this looks quite extreme and I suspect it may make the model overfit to some moves</p>
+<h2 id="training-the-model">Training the model</h2>
+<p>I trained the models with the following parameters:</p>
+<pre class=" language-python"><code class="prism  language-python">batchSize <span class="token operator">=</span> <span class="token number">512</span>
+lr <span class="token operator">=</span> <span class="token number">1e</span><span class="token operator">-</span><span class="token number">4</span>
+wd <span class="token operator">=</span> <span class="token number">1</span><span class="token punctuation">.</span> 
+betas <span class="token operator">=</span> <span class="token punctuation">(</span><span class="token number">0.9</span><span class="token punctuation">,</span> <span class="token number">0.98</span><span class="token punctuation">)</span>
+</code></pre>
+<p>I copied most of the training code from the <a href="https://colab.research.google.com/github/neelnanda-io/TransformerLens/blob/main/demos/Grokking_Demo.ipynb">Grokking demo colab</a> and played a bit with the learning rate before I settled on 1e-4 and unleashed the full power of my RTX 4070 (lol). However I didn’t consider the weight decay which now I consider a big mistake. Did I say this was the first time I am training a model?</p>
+<p>For batch size I put the largest number that seemed to fit onto my GPU.<br>
+I trained for 190k iterations.</p>
+<p>For the loss function I used the built-in cross entropy loss on the whole sequence. In retrospect I think I could have calculated the loss only on the white’s move predictions, this way the model would not have wasted resources trying to learn how to predict the black’s moves as well.</p>
+<p><img src="https://i.ibb.co/FHxRz9r/training-loss.png" alt="Training loss"></p>
+<p>After 160k batches I decreased the learning rate to 1e-5 and that seemed to improve the learning</p>
+<h2 id="model-performance">Model performance</h2>
+<p>The model was able to produce a <strong>legal move</strong> in <strong>99%</strong> of the cases<br>
+The model was able to produce a <strong>checkmate</strong> in <strong>72%</strong> of the games <strong>vs random defense</strong> and <strong>69% vs optimal defense</strong><br>
+After playing few games with the model I noticed that the model has well learned the algorithm and was methodically cornering my king into the white corner. The first few moves seemed sub-optimal but once my king was forced on the edge of the board it seemed that the model was producing optimal moves.<br>
+Something that I found interesting was that <em>it seemed that the model was able to detect when its pieces were in danger</em> and always moved them out of the way. I was not able to capture its piece a single time.</p>
+<p>The code I used for sampling is <a href="">here</a></p>
+<h2 id="exploration">Exploration</h2>
+<h3 id="general-observations">General observations</h3>
+<p>Let’s start with a game that I played as black against the model. My strategy for the game was to try to capture the enemy’s bishop. The model was successful at detecting when the bishop was in tanger and moving it out and was ultimately able to reach a checkmate.</p>
+<iframe width="600" height="371" src="https://lichess.org/study/embed/ruqNokDo/nnb9HfBr#49"></iframe>
+<p><sub>Sidenode: It was weird to get checkmated by a small GPT-2 model, I don’t know how to feel about this</sub></p>
+<p>Note the moves 4,6,8 and 11 in which the model detects that the bishop is in danger and moves it out. Those would be interesting to check out.</p>
+<p>Let’s take a particular move for example and see what is going on. I generated the log probabilities of all moves from that position.</p>
+<p><img src="https://lichess1.org/export/fen.gif?fen=8%2F8%2FB7%2F2k5%2F6K1%2F8%2F8%2F7N+w+-+-+12+7&amp;color=white&amp;lastMove=d4c5&amp;variant=standard&amp;theme=brown&amp;piece=cburnett" alt="Board"></p>
+<p><img src="https://i.ibb.co/mS8kRP5/example1-B.png" alt="Log probs"></p>
+<p>It seems the model is considering mostly legal moves but that is not yet an evidence that it actually understands the game, it is very plausible that it has figured out that “Ba6” can sometimes be followed by “Be2” but never by “Bg4”</p>
+<p>Next I generated the log probabilities for all positions in that game.</p>
+<div class='child inline-block-child' style="display: inline-block" id="graphDisplayB">
+  <iframe id="Bgraph1" src="visualisations/game_log_probs/Move_0_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph2" src="visualisations/game_log_probs/Move_1_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph3" src="visualisations/game_log_probs/Move_2_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph4" src="visualisations/game_log_probs/Move_3_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph5" src="visualisations/game_log_probs/Move_4_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph6" src="visualisations/game_log_probs/Move_5_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph7" src="visualisations/game_log_probs/Move_6_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph8" src="visualisations/game_log_probs/Move_7_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph9" src="visualisations/game_log_probs/Move_8_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph10" src="visualisations/game_log_probs/Move_9_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph11" src="visualisations/game_log_probs/Move_10_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph12" src="visualisations/game_log_probs/Move_11_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph13" src="visualisations/game_log_probs/Move_12_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph14" src="visualisations/game_log_probs/Move_13_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph15" src="visualisations/game_log_probs/Move_14_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph16" src="visualisations/game_log_probs/Move_15_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph17" src="visualisations/game_log_probs/Move_16_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph18" src="visualisations/game_log_probs/Move_17_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph19" src="visualisations/game_log_probs/Move_18_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph20" src="visualisations/game_log_probs/Move_19_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph21" src="visualisations/game_log_probs/Move_20_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph22" src="visualisations/game_log_probs/Move_21_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph23" src="visualisations/game_log_probs/Move_22_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph24" src="visualisations/game_log_probs/Move_23_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph25" src="visualisations/game_log_probs/Move_24_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph26" src="visualisations/game_log_probs/Move_25_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph27" src="visualisations/game_log_probs/Move_26_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph28" src="visualisations/game_log_probs/Move_27_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph29" src="visualisations/game_log_probs/Move_28_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph30" src="visualisations/game_log_probs/Move_29_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph31" src="visualisations/game_log_probs/Move_30_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph32" src="visualisations/game_log_probs/Move_31_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph33" src="visualisations/game_log_probs/Move_32_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph34" src="visualisations/game_log_probs/Move_33_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph35" src="visualisations/game_log_probs/Move_34_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph36" src="visualisations/game_log_probs/Move_35_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph37" src="visualisations/game_log_probs/Move_36_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph38" src="visualisations/game_log_probs/Move_37_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph39" src="visualisations/game_log_probs/Move_38_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph40" src="visualisations/game_log_probs/Move_39_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph41" src="visualisations/game_log_probs/Move_40_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph42" src="visualisations/game_log_probs/Move_41_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph43" src="visualisations/game_log_probs/Move_42_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph44" src="visualisations/game_log_probs/Move_43_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph45" src="visualisations/game_log_probs/Move_44_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph46" src="visualisations/game_log_probs/Move_45_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph47" src="visualisations/game_log_probs/Move_46_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph48" src="visualisations/game_log_probs/Move_47_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Bgraph49" src="visualisations/game_log_probs/Move_48_B.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+</div>
+<div class='child inline-block-child' style="display: inline-block" id="graphDisplayK">
+  <iframe id="Kgraph1" src="visualisations/game_log_probs/Move_0_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph2" src="visualisations/game_log_probs/Move_1_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph3" src="visualisations/game_log_probs/Move_2_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph4" src="visualisations/game_log_probs/Move_3_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph5" src="visualisations/game_log_probs/Move_4_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph6" src="visualisations/game_log_probs/Move_5_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph7" src="visualisations/game_log_probs/Move_6_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph8" src="visualisations/game_log_probs/Move_7_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph9" src="visualisations/game_log_probs/Move_8_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph10" src="visualisations/game_log_probs/Move_9_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph11" src="visualisations/game_log_probs/Move_10_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph12" src="visualisations/game_log_probs/Move_11_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph13" src="visualisations/game_log_probs/Move_12_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph14" src="visualisations/game_log_probs/Move_13_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph15" src="visualisations/game_log_probs/Move_14_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph16" src="visualisations/game_log_probs/Move_15_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph17" src="visualisations/game_log_probs/Move_16_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph18" src="visualisations/game_log_probs/Move_17_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph19" src="visualisations/game_log_probs/Move_18_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph20" src="visualisations/game_log_probs/Move_19_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph21" src="visualisations/game_log_probs/Move_20_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph22" src="visualisations/game_log_probs/Move_21_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph23" src="visualisations/game_log_probs/Move_22_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph24" src="visualisations/game_log_probs/Move_23_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph25" src="visualisations/game_log_probs/Move_24_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph26" src="visualisations/game_log_probs/Move_25_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph27" src="visualisations/game_log_probs/Move_26_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph28" src="visualisations/game_log_probs/Move_27_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph29" src="visualisations/game_log_probs/Move_28_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph30" src="visualisations/game_log_probs/Move_29_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph31" src="visualisations/game_log_probs/Move_30_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph32" src="visualisations/game_log_probs/Move_31_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph33" src="visualisations/game_log_probs/Move_32_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph34" src="visualisations/game_log_probs/Move_33_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph35" src="visualisations/game_log_probs/Move_34_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph36" src="visualisations/game_log_probs/Move_35_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph37" src="visualisations/game_log_probs/Move_36_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph38" src="visualisations/game_log_probs/Move_37_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph39" src="visualisations/game_log_probs/Move_38_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph40" src="visualisations/game_log_probs/Move_39_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph41" src="visualisations/game_log_probs/Move_40_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph42" src="visualisations/game_log_probs/Move_41_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph43" src="visualisations/game_log_probs/Move_42_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph44" src="visualisations/game_log_probs/Move_43_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph45" src="visualisations/game_log_probs/Move_44_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph46" src="visualisations/game_log_probs/Move_45_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph47" src="visualisations/game_log_probs/Move_46_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph48" src="visualisations/game_log_probs/Move_47_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Kgraph49" src="visualisations/game_log_probs/Move_48_K.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+</div>
+<div class='child inline-block-child' style="display: inline-block" id="graphDisplayN">
+  <iframe id="Ngraph1" src="visualisations/game_log_probs/Move_0_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph2" src="visualisations/game_log_probs/Move_1_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph3" src="visualisations/game_log_probs/Move_2_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph4" src="visualisations/game_log_probs/Move_3_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph5" src="visualisations/game_log_probs/Move_4_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph6" src="visualisations/game_log_probs/Move_5_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph7" src="visualisations/game_log_probs/Move_6_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph8" src="visualisations/game_log_probs/Move_7_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph9" src="visualisations/game_log_probs/Move_8_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph10" src="visualisations/game_log_probs/Move_9_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph11" src="visualisations/game_log_probs/Move_10_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph12" src="visualisations/game_log_probs/Move_11_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph13" src="visualisations/game_log_probs/Move_12_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph14" src="visualisations/game_log_probs/Move_13_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph15" src="visualisations/game_log_probs/Move_14_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph16" src="visualisations/game_log_probs/Move_15_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph17" src="visualisations/game_log_probs/Move_16_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph18" src="visualisations/game_log_probs/Move_17_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph19" src="visualisations/game_log_probs/Move_18_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph20" src="visualisations/game_log_probs/Move_19_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph21" src="visualisations/game_log_probs/Move_20_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph22" src="visualisations/game_log_probs/Move_21_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph23" src="visualisations/game_log_probs/Move_22_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph24" src="visualisations/game_log_probs/Move_23_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph25" src="visualisations/game_log_probs/Move_24_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph26" src="visualisations/game_log_probs/Move_25_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph27" src="visualisations/game_log_probs/Move_26_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph28" src="visualisations/game_log_probs/Move_27_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph29" src="visualisations/game_log_probs/Move_28_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph30" src="visualisations/game_log_probs/Move_29_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph31" src="visualisations/game_log_probs/Move_30_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph32" src="visualisations/game_log_probs/Move_31_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph33" src="visualisations/game_log_probs/Move_32_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph34" src="visualisations/game_log_probs/Move_33_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph35" src="visualisations/game_log_probs/Move_34_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph36" src="visualisations/game_log_probs/Move_35_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph37" src="visualisations/game_log_probs/Move_36_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph38" src="visualisations/game_log_probs/Move_37_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph39" src="visualisations/game_log_probs/Move_38_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph40" src="visualisations/game_log_probs/Move_39_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph41" src="visualisations/game_log_probs/Move_40_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph42" src="visualisations/game_log_probs/Move_41_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph43" src="visualisations/game_log_probs/Move_42_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph44" src="visualisations/game_log_probs/Move_43_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph45" src="visualisations/game_log_probs/Move_44_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph46" src="visualisations/game_log_probs/Move_45_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph47" src="visualisations/game_log_probs/Move_46_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph48" src="visualisations/game_log_probs/Move_47_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Ngraph49" src="visualisations/game_log_probs/Move_48_N.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+</div>
+<div class='child inline-block-child' style="display: inline-block" id="graphDisplayE">
+  <iframe id="Egraph1" src="visualisations/game_log_probs/Move_0_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph2" src="visualisations/game_log_probs/Move_1_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph3" src="visualisations/game_log_probs/Move_2_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph4" src="visualisations/game_log_probs/Move_3_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph5" src="visualisations/game_log_probs/Move_4_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph6" src="visualisations/game_log_probs/Move_5_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph7" src="visualisations/game_log_probs/Move_6_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph8" src="visualisations/game_log_probs/Move_7_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph9" src="visualisations/game_log_probs/Move_8_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph10" src="visualisations/game_log_probs/Move_9_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph11" src="visualisations/game_log_probs/Move_10_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph12" src="visualisations/game_log_probs/Move_11_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph13" src="visualisations/game_log_probs/Move_12_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph14" src="visualisations/game_log_probs/Move_13_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph15" src="visualisations/game_log_probs/Move_14_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph16" src="visualisations/game_log_probs/Move_15_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph17" src="visualisations/game_log_probs/Move_16_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph18" src="visualisations/game_log_probs/Move_17_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph19" src="visualisations/game_log_probs/Move_18_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph20" src="visualisations/game_log_probs/Move_19_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph21" src="visualisations/game_log_probs/Move_20_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph22" src="visualisations/game_log_probs/Move_21_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph23" src="visualisations/game_log_probs/Move_22_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph24" src="visualisations/game_log_probs/Move_23_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph25" src="visualisations/game_log_probs/Move_24_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph26" src="visualisations/game_log_probs/Move_25_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph27" src="visualisations/game_log_probs/Move_26_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph28" src="visualisations/game_log_probs/Move_27_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph29" src="visualisations/game_log_probs/Move_28_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph30" src="visualisations/game_log_probs/Move_29_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph31" src="visualisations/game_log_probs/Move_30_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph32" src="visualisations/game_log_probs/Move_31_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph33" src="visualisations/game_log_probs/Move_32_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph34" src="visualisations/game_log_probs/Move_33_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph35" src="visualisations/game_log_probs/Move_34_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph36" src="visualisations/game_log_probs/Move_35_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph37" src="visualisations/game_log_probs/Move_36_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph38" src="visualisations/game_log_probs/Move_37_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph39" src="visualisations/game_log_probs/Move_38_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph40" src="visualisations/game_log_probs/Move_39_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph41" src="visualisations/game_log_probs/Move_40_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph42" src="visualisations/game_log_probs/Move_41_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph43" src="visualisations/game_log_probs/Move_42_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph44" src="visualisations/game_log_probs/Move_43_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph45" src="visualisations/game_log_probs/Move_44_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph46" src="visualisations/game_log_probs/Move_45_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph47" src="visualisations/game_log_probs/Move_46_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph48" src="visualisations/game_log_probs/Move_47_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+  <iframe id="Egraph49" src="visualisations/game_log_probs/Move_48_E.html" width="600" height="400" style="display: none;" frameborder="0"></iframe>
+</div>
+
+<!-- Button to switch between graphs -->
+<button onclick="switchGraphs(-1)">Previous</button>
+<button onclick="switchGraphs(1)">Next</button>
+
+<script>
+  showGraph(1); // Show the first graph initially
+</script>
+<p>Few observations:</p>
+<ul>
+<li>It seems that the model well understands who’s turn it is and supresses the probabilities of the opponent’s moves</li>
+<li>The model considers mostly legal moves and usually has only 1 or 2 with very high probability. It would be interesting to figure out at which point the filtering of the illegal moves happens</li>
+<li>When predicting the black king’s moves it correctly supresses the probabilities of squares that are attacked by the bishop. It would be interesting to check if it has learned it because ‘Kb5’ never follows a ‘Be2’ or because it understands that ‘b5’ is a place that can be occupied by both the king and the bishop. One way to test this would be to put the Bishop on e2 but block it’s way with something, like Nd3 and see if the model will correctly figure out that the b5 square is now available</li>
+<li>When the bishop is under attack it’s probabilities seem to be boosted and the other pieces’ seem to be supressed (with one notable exception on Move 10). It would be interesting to explore how that happens</li>
+</ul>
+<p>Here are some particular examples:</p>
+<p><strong>Suppressing probabilities of squares that are attacked</strong></p>
+<p><img src="https://gcdnb.pbrd.co/images/3QRwiFjvDgvO.png?o=1" alt="Log probs"><br>
+Bishop at A6 suppresses the probabilities for the black king to move to B5 and C4</p>
+<p><img src="https://gcdnb.pbrd.co/images/QdLoG2wrQKkA.png?o=1" alt="Log probs"><br>
+Bishop at D4 suppresses the probabilities for the black king to move to A6 and B5<br>
+<img src="https://gcdnb.pbrd.co/images/Bb68z1BERr6d.png?o=1" alt="Log probs"><br>
+Bishop at F7 suppresses the probabilities for the black king to move to D5 and C4</p>
+<p><strong>Bishop is attacked - probabilities of the other pieces are suppressed</strong><br>
+<img src="https://gcdnb.pbrd.co/images/DtND6DGHskam.png?o=1" alt="Log probs"><br>
+Bishop on A6 is attacked by the king on B6 and the probabilities of all the other pieces seem suppressed</p>
+<p><strong>Interesting case when the bishop is attacked but the knight can defend it and the knight is suddenly activated</strong><br>
+<img src="https://gcdnb.pbrd.co/images/tuQMjtGcquOk.png?o=1" alt="Log probs"><br>
+Bishop on D3 is attacked by the king on D4 but this time the knight is ‘activated’ as it can protect the Bishop with Kf2!</p>
+<h2 id="logit-attribution">Logit attribution</h2>
+<p>I wanted to understand more which parts of the model are the most important for its decisions. I decided to take an example of a position where there is clearly 1 good move (the position just before checkmate) and see what contributes to that move’s probability.</p>
+<p><img src="https://lichess1.org/export/fen.gif?fen=k7%2F3B4%2FNK6%2F8%2F8%2F8%2F8%2F8+w+-+-+48+25&amp;color=white&amp;lastMove=b8a8&amp;variant=standard&amp;theme=brown&amp;piece=cburnett" alt="Board"></p>
+<p>For this section I closely followed ARENA’s <a href="https://arena-ch1-transformers.streamlit.app/%5B1.3%5D_Indirect_Object_Identification">[1.3] Indirect_Object_Identification</a> tutorial</p>
+<h3 id="logit-difference">Logit difference</h3>
+<p>I decided to compare it to a move that is very close but not checkmate and so picked ‘Bb5’ as the ‘corrupted’ input.<br>
+Then I calculated the residual directions for the correct and incorrect prediction and subtracted them.</p>
+<h3 id="accumulated-residual-stream">Accumulated residual stream</h3>
+<p>I used that on the accumulated residual stream to see how the model performs until each layer.<br>
+<img src="https://gcdnb.pbrd.co/images/fx2fJ7M2GSlf.png?o=1" alt="Residual stream"></p>
+<p>This seems off but I can’t find my mistake :( Or I should have compared the ‘best’ move against multiple others?</p>
+<h3 id="layer-attribution">Layer attribution</h3>
+<p>I also did the same but for each layer instead of the accumulated.</p>
+<p><img src="https://gcdnb.pbrd.co/images/T8lf10c10jnh.png?o=1" alt="Layer logit diff"></p>
+<p>MLP1 super positive and MLP2 super negative? I must have a mistake somewhere. Or is it just a case of transformers be transformin’?</p>
+<h3 id="head-attribution">Head attribution</h3>
+<p>I further broke down the output of each attention layer into the sum of the outputs of each attention head</p>
+<p><img src="https://gcdnb.pbrd.co/images/lgMZfmAbveb4.png?o=1" alt="Training loss"></p>
+<p>L1H2 is feeling quite negative</p>
+<h2 id="attention-patterns">Attention patterns</h2>
+<p>Used the awesome circuitsvis to visualize the attention patterns</p>
+<p><img src="https://gcdnb.pbrd.co/images/zZOh22eUeajq.png?o=1" alt="Attention patterns"><br>
+The very negative L1H2 seems to activate on some particular moves for some reason. I couldn’t see nothing special about those moves :(</p>
+<p><img src="https://gcdnb.pbrd.co/images/dNd7JEoifBNY.png?o=1" alt="Attention patterns"><br>
+<img src="https://gcdnb.pbrd.co/images/vcoRwdKJXnNu.png?o=1" alt="Attention patterns"></p>
+<p>L2H2 and L3H3 look suspiciously like induction heads to me</p>
+<h2 id="activation-patching">Activation patching</h2>
+<p>For this section I closely followed ARENA’s <a href="https://arena-ch1-transformers.streamlit.app/%5B1.6%5D_OthelloGPT">[1.6] OthelloGPT</a> tutorial</p>
+<p>I wanted to understand more how the model decides which moves are legal and which are not. I decided to use activation patching to try to localise which part of the model is responsible for that.</p>
+<p>I chose the following example:</p>
+<p>[board]</p>
+<p>Here the last move from black was ‘kb7’ to which the model predicts ‘Kb5’. I want to patch it so that black’s last move was ‘kb6’ (which makes the following ‘Kb5’ illegal) and see which layers change the output significantly.</p>
+<p><img src="https://gcdnb.pbrd.co/images/O6efP7OK3IiN.png?o=1" alt="Training loss"></p>
+<p>Similar to the work on the Othello model the difference comes only from the MLP layers and nothing comes from the attention layers. Most of the work seems to happen in the second layer</p>
+<h3 id="linear-probing">Linear probing</h3>
+<p>This was supposed to be the most interesting part and the one that would hopefully show real results, however I terribly failed in training a probe in the allocated time (sadface)<br>
+This will remain for future work</p>
+<h2 id="summary">Summary</h2>
+<p>I trained a small (3 million parameters) GPT-2 style model to play bishop-and-knight chess endgames.</p>
+<ul>
+<li>The model was producing a legal move in 99% of the cases</li>
+<li>The model was reaching a checkmate in 72% of the games</li>
+</ul>
+<p>There was some interesting information on the surface but more time would be needed to zoom into the details.</p>
+<p>Looking at the log probabilities of the possible moves it seemed like the model had good understanding of who’s turn it is, which are the possible legal moves and if a piece is under attack, however this could have been learned by finding statistical patterns from the moves.</p>
+<p>Visualizing attention patterns showed that head X is likely an induction head.</p>
+<p>Using activation patching showed that the calculation if a move is legal or not happens mostly in the MLP layers.</p>
+<p>In conclusion I don’t think I have found strong evidence for emerging world representations in this model, but I think this is mainly to the limited time spent on the project and my failure to train a linear probe. I think that further work is likely to uncover such representations.</p>
+</div>
+</body>
+
+</html>
