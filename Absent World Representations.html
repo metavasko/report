@@ -57,7 +57,7 @@ However the number of possible move sequences is vastly greater, if we consider 
 <ul>
 <li>A model is able to produce a legal move in 99%+ cases (similar to the Othello model)</li>
 <li>A model is able to checkmate in 90% cases (I suspect that learning the checkmate algorithm is vastly harder than learning the board representation)</li>
-<li>The model will have an internal representations of the positions of the pieces
+<li>The model will have an internal representations of the positions of the pieces</li>
 <ul>
 <li>I can train a linear probe to predict the positions of the pieces from the residual stream of the model</li>
 <li>Using the linear probe I can modify the internal position to make the king suddenly appear on the other end of the board for example</li>
@@ -420,7 +420,7 @@ The very negative L1H2 seems to activate on some particular moves for some reaso
 <p>For this section I closely followed ARENA’s <a href="https://arena-ch1-transformers.streamlit.app/%5B1.6%5D_OthelloGPT">[1.6] OthelloGPT</a> tutorial</p>
 <p>I wanted to understand more how the model decides which moves are legal and which are not. I decided to use activation patching to try to localise which part of the model is responsible for that.</p>
 <p>I chose the following example:</p>
-<p>[board]</p>
+<p><img src="https://lichess1.org/export/fen.gif?fen=4B3%2F1k6%2F4N3%2F8%2F1K6%2F8%2F8%2F8+w+-+-+38+20&amp;color=white&amp;lastMove=a6b7&amp;variant=standard&amp;theme=brown&amp;piece=cburnett" alt="Board"></p>
 <p>Here the last move from black was ‘kb7’ to which the model predicts ‘Kb5’. I want to patch it so that black’s last move was ‘kb6’ (which makes the following ‘Kb5’ illegal) and see which layers change the output significantly.</p>
 <p><img src="https://gcdnb.pbrd.co/images/O6efP7OK3IiN.png?o=1" alt="Training loss"></p>
 <p>Similar to the work on the Othello model the difference comes only from the MLP layers and nothing comes from the attention layers. Most of the work seems to happen in the second layer</p>
